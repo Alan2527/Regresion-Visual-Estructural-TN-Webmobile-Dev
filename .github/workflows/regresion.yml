@@ -1,0 +1,100 @@
+name: Regresión Estructural TN Dev Webmobile
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_number:
+        description: 'Número de versión para comparar (parámetro d=)'
+        required: true
+        default: '4033'
+
+jobs:
+  run-test:
+    runs-on: ubuntu-latest
+    # ESTO SOLUCIONA EL ERROR 403:
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+    - name: Checkout del código
+      uses: actions/checkout@v4
+
+    - name: Configurar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Instalar dependencias del sistema
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgl1 libglib2.0-0
+
+    - name: Instalar librerías de Python
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Ejecutar Script de Regresión
+      run: |
+        python TN-sinimagenes.py ${{ github.event.inputs.version_number }}
+
+    - name: Subir Reportes como Artefactos
+      if: always()
+      id: upload-artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: reporte-regresion-v${{ github.event.inputs.version_number }}
+        path: "Reportes HTML - TN - WEBMOBILE - DEV"
+        retention-days: 7
+
+    - name: Obtener URL directa del Artefacto
+      if: always()
+      id: get-artifact-url
+      uses: actions/github-script@v7
+      with:
+        script: |
+          // Esperamos un segundo para asegurar que la API de GitHub registre el artefacto
+          await new Promise(r => setTimeout(r, 2000));
+          
+          const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            run_id: context.runId,
+          });
+          
+          const matchArtifact = artifacts.data.artifacts.find((artifact) => {
+            return artifact.name == "reporte-regresion-v${{ github.event.inputs.version_number }}"
+          });
+          
+          if (matchArtifact) {
+            const downloadUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}/artifacts/${matchArtifact.id}`;
+            core.setOutput("DOWNLOAD_URL", downloadUrl);
+          } else {
+            core.setOutput("DOWNLOAD_URL", "No se pudo generar el link del archivo.");
+          }
+
+    - name: Notificar a Slack
+      if: always()
+      uses: slackapi/slack-github-action@v1.26.0
+      with:
+        payload: |
+          {
+            "text": "🚀 *Regresión Finalizada - TN Dev - Webmobile V${{ github.event.inputs.version_number }}* *Estado:* ${{ job.status }}\n*Artifact download URL:* ${{ steps.get-artifact-url.outputs.DOWNLOAD_URL }}",
+            "attachments": [
+              {
+                "color": "${{ job.status == 'success' && 'good' || 'danger' }}",
+                "blocks": [
+                  {
+                    "type": "section",
+                    "text": {
+                      "type": "mrkdwn",
+                      "text": "*Estado:* ${{ job.status }}\n*Artifact download URL:* ${{ steps.get-artifact-url.outputs.DOWNLOAD_URL }}"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+      env:
+        SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/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"
